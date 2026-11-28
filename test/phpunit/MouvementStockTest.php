@@ -363,10 +363,15 @@ class MouvementStockTest extends CommonClassTest
 		$this->assertGreaterThan(0, $warehouseid, 'Failed to create warehouse');
 
 		$movement = new MouvementStock($db);
+		// Entries from a supplier order: they set the PMP
+		$movement->origin_type = 'order_supplier';
+		$movement->origin_id = 1;
 		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 10, 0, 5, 'Input 1'));
 		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 10, 0, 15, 'Input 2'));
 		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, -20, 1, 0, 'Output to zero'));
 		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 4, 0, 20, 'Input after zero'));
+		$movement->origin_type = '';
+		$movement->origin_id = 0;
 		$this->assertCount(0, $movement->getPMPRecalculations($productid), 'PMP written by the movements must not be listed');
 
 		// PMP changed without movement
@@ -405,5 +410,17 @@ class MouvementStockTest extends CommonClassTest
 		$this->assertIsArray($recalculations);
 		$this->assertCount(1, $recalculations);
 		$this->assertEquals(20, $recalculations[0]['newpmp'], 'A transfer of all the stock does not restart the PMP');
+
+		// An entry with no origin (inventory, correction) does not change the PMP, whatever its price
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 1, 0, 5, 'Inventory entry'));
+		$recalculations = $movement->getPMPRecalculations($productid);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(20, $recalculations[0]['newpmp'], 'An entry with no origin does not change the PMP');
+
+		// A product whose stock is not equal to its movements is not recalculated
+		$db->query("UPDATE ".$db->prefix()."product_stock SET reel = reel + 1 WHERE fk_product = ".((int) $productid)." AND fk_entrepot = ".((int) $warehouseid));
+		$this->assertCount(0, $movement->getPMPRecalculations($productid));
+		$this->assertEquals(1, $movement->nbpmpexcluded);
 	}
 }

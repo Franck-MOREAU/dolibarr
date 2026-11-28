@@ -197,14 +197,14 @@ print '</div>';
 print '<br>';
 print load_fiche_titre($langs->trans('PMPRecalculation'), '', 'stock');
 print '<span class="opacitymedium">'.$langs->trans('PMPRecalculationDesc').'</span><br><br>';
-if (count($differences) > 0) {
-	print info_admin($langs->trans('PMPRecalculationStockDifferencesFirst'), 0, 0, 'warning');
-}
 
 $recalculations = $movement->getPMPRecalculations();
 if (!is_array($recalculations)) {
 	dol_print_error($db, $movement->error);
 	$recalculations = array();
+}
+if ($movement->nbpmpexcluded > 0) {
+	print info_admin($langs->trans('PMPRecalculationExcluded', $movement->nbpmpexcluded), 0, 0, 'warning');
 }
 
 if ($action == 'recalculatepmp') {

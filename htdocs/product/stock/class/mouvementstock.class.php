@@ -1525,6 +1525,11 @@ class MouvementStock extends CommonObject
 	}
 
 	/**
+	 * @var int Number of products not recalculated by getPMPRecalculations() because their stock is not equal to the sum of their movements
+	 */
+	public $nbpmpexcluded = 0;
+
+	/**
 	 * Return the products and warehouses whose stock (llx_product_stock.reel) is not equal to the sum of their stock movements.
 	 * Products managed by lot or serial number are not checked. Warehouses are the ones of getEntity('stock').
 	 *
@@ -1622,6 +1627,7 @@ class MouvementStock extends CommonObject
 	 * Recalculate the PMP of products from their stock movements, from the last time their stock was zero or negative.
 	 * The movements after this point are replayed with calculatePMP(), the rule used when a movement is recorded.
 	 * The stock is the one of the warehouses of the current entity with PMP per entity, of getEntity('stock') otherwise.
+	 * Products whose stock is not equal to the sum of their movements are not recalculated (counted in $this->nbpmpexcluded).
 	 *
 	 * @param	int		$fk_product		Only this product (0 = all products with stock movements)
 	 * @return	array<int,array{fk_product:int,product_ref:string,product_label:string,pmp:float,newpmp:float,datezero:int|string,nbmovements:int}>|int	Products whose recalculated PMP differs from the current one, or -1 if error
@@ -1632,15 +1638,46 @@ class MouvementStock extends CommonObject
 
 		require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 
+		$this->nbpmpexcluded = 0;
+		if (Product::isPMPPerEntity()) {
+			$sqlscope = "e.entity = ".((int) $conf->entity);
+		} else {
+			$sqlscope = "e.entity IN (".getEntity('stock').")";
+		}
+
+		// Products whose stock is not equal to the sum of their movements: the last zero stock can not be found
+		$stockdifferences = $this->getStockDifferences($fk_product);
+		if (!is_array($stockdifferences)) {
+			return -1;
+		}
+		$excluded = array();
+		foreach ($stockdifferences as $stockdifference) {
+			$excluded[$stockdifference['fk_product']] = 1;
+		}
+
+		// Outputs in the warehouses of other entities: an entry at the same date is a transfer between entities
+		$outputsotherentities = array();
+		$sql = "SELECT sm.fk_product, sm.datem FROM ".$this->db->prefix()."stock_mouvement as sm";
+		$sql .= " INNER JOIN ".$this->db->prefix()."entrepot as e ON e.rowid = sm.fk_entrepot AND NOT (".$sqlscope.")";
+		$sql .= " WHERE sm.value < 0";
+		if ($fk_product > 0) {
+			$sql .= " AND sm.fk_product = ".((int) $fk_product);
+		}
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		while ($obj = $this->db->fetch_object($resql)) {
+			$outputsotherentities[(int) $obj->fk_product][(string) $obj->datem] = 1;
+		}
+		$this->db->free($resql);
+
 		$sql = "SELECT sm.fk_product, sm.value, sm.price, sm.type_mouvement, sm.origintype, sm.datem,";
 		$sql .= " p.ref as product_ref, p.label as product_label, ".Product::getSQLPMP('p', 'ppe')." as pmp";
 		$sql .= " FROM ".$this->db->prefix()."stock_mouvement as sm";
-		$sql .= " INNER JOIN ".$this->db->prefix()."entrepot as e ON e.rowid = sm.fk_entrepot";
-		if (Product::isPMPPerEntity()) {
-			$sql .= " AND e.entity = ".((int) $conf->entity);
-		} else {
-			$sql .= " AND e.entity IN (".getEntity('stock').")";
-		}
+		$sql .= " INNER JOIN ".$this->db->prefix()."entrepot as e ON e.rowid = sm.fk_entrepot AND ".$sqlscope;
 		$sql .= " INNER JOIN ".$this->db->prefix()."product as p ON p.rowid = sm.fk_product";
 		$sql .= Product::getSQLJoinPMP('p', 'ppe', (int) $conf->entity);
 		if ($fk_product > 0) {
@@ -1663,7 +1700,12 @@ class MouvementStock extends CommonObject
 		while (true) {
 			$obj = $this->db->fetch_object($resql);
 			if (!empty($movements) && (!$obj || (int) $obj->fk_product != $current->fk_product)) {
-				$result = $this->recalculatePMPOfMovements($movements, (float) $current->pmp);
+				if (isset($excluded[(int) $current->fk_product])) {
+					$this->nbpmpexcluded++;
+					$result = array('newpmp' => (float) $current->pmp);
+				} else {
+					$result = $this->recalculatePMPOfMovements($movements, (float) $current->pmp, isset($outputsotherentities[(int) $current->fk_product]) ? $outputsotherentities[(int) $current->fk_product] : array());
+				}
 				if (abs($result['newpmp'] - (float) $current->pmp) > 0.00000001) {
 					$results[] = array(
 						'fk_product' => (int) $current->fk_product,
@@ -1692,14 +1734,16 @@ class MouvementStock extends CommonObject
 	/**
 	 * Replay the movements of one product (sorted by date) from the last time the stock was zero or negative.
 	 * The replay starts with a PMP of 0, like a new product, so the result does not depend on the current PMP.
-	 * An entry with an output of the same product at the same date (transfer, inventory) does not change the PMP:
-	 * its price is only a copy of the PMP of that time.
+	 * An entry with an output of the same product at the same date (transfer, inventory), or an entry with no origin
+	 * (inventory, correction), does not change the PMP: its price is only a copy of the PMP of that time.
+	 * An entry with no origin and an output of another entity at the same date is a transfer between entities: it keeps its price.
 	 *
-	 * @param	array<int,stdClass>	$movements	Movements of the product (value, price, type_mouvement, origintype, datem)
-	 * @param	float				$pmp		Current PMP, returned when no entry with a price is replayed
+	 * @param	array<int,stdClass>	$movements				Movements of the product (value, price, type_mouvement, origintype, datem)
+	 * @param	float				$pmp					Current PMP, returned when no entry with a price is replayed
+	 * @param	array<string,int>	$outputsotherentities	Dates of the outputs of this product in the warehouses of other entities
 	 * @return	array{newpmp:float,datezero:int|string,nbmovements:int}	Recalculated PMP, date of the last zero stock ('' if never), number of movements replayed
 	 */
-	private function recalculatePMPOfMovements(array $movements, float $pmp): array
+	private function recalculatePMPOfMovements(array $movements, float $pmp, array $outputsotherentities = array()): array
 	{
 		$qty = 0;
 		$zero = -1;
@@ -1723,8 +1767,11 @@ class MouvementStock extends CommonObject
 		$newpmp = 0;
 		$nb = 0;
 		for ($i = $zero + 1; $i < count($movements); $i++) {
-			$istransfer = ((float) $movements[$i]->value > 0 && isset($datesofoutputs[(string) $movements[$i]->datem]));
-			if (!$istransfer) {
+			$isentry = ((float) $movements[$i]->value > 0);
+			$istransfer = ($isentry && isset($datesofoutputs[(string) $movements[$i]->datem]));
+			$isfromotherentity = ($isentry && isset($outputsotherentities[(string) $movements[$i]->datem]));
+			$iswithoutorigin = ($isentry && (string) $movements[$i]->origintype == '' && !$isfromotherentity);
+			if (!$istransfer && !$iswithoutorigin) {
 				$this->origin_type = (string) $movements[$i]->origintype;
 				$newpmp = (float) price2num($this->calculatePMP($qty, $newpmp, (float) $movements[$i]->value, (float) $movements[$i]->price, (int) $movements[$i]->type_mouvement), 'MU');
 			}
