@@ -387,5 +387,14 @@ class MouvementStockTest extends CommonClassTest
 		$this->assertIsArray($recalculations);
 		$this->assertCount(1, $recalculations);
 		$this->assertEquals(20, $recalculations[0]['newpmp'], 'Same result whatever the current PMP');
+
+		// A transfer (output and entry at the same date) does not change the recalculated PMP, whatever its price
+		$datetransfer = dol_now();
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, -1, 1, 999, 'Transfer out', 'TRANSFERPHPUNIT', $datetransfer));
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 1, 0, 999, 'Transfer in', 'TRANSFERPHPUNIT', $datetransfer));
+		$recalculations = $movement->getPMPRecalculations($productid);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(20, $recalculations[0]['newpmp'], 'A transfer does not change the PMP');
 	}
 }

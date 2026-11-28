@@ -1692,6 +1692,8 @@ class MouvementStock extends CommonObject
 	/**
 	 * Replay the movements of one product (sorted by date) from the last time the stock was zero or negative.
 	 * The replay starts with a PMP of 0, like a new product, so the result does not depend on the current PMP.
+	 * An entry with an output of the same product at the same date (transfer, inventory) does not change the PMP:
+	 * its price is only a copy of the PMP of that time.
 	 *
 	 * @param	array<int,stdClass>	$movements	Movements of the product (value, price, type_mouvement, origintype, datem)
 	 * @param	float				$pmp		Current PMP, returned when no entry with a price is replayed
@@ -1701,7 +1703,11 @@ class MouvementStock extends CommonObject
 	{
 		$qty = 0;
 		$zero = -1;
+		$datesofoutputs = array();
 		foreach ($movements as $i => $movement) {
+			if ((float) $movement->value < 0) {
+				$datesofoutputs[(string) $movement->datem] = 1;
+			}
 			$qty += (float) $movement->value;
 			if ((float) price2num($qty, 'MS') <= 0) {
 				$zero = $i;
@@ -1715,8 +1721,11 @@ class MouvementStock extends CommonObject
 		$newpmp = 0;
 		$nb = 0;
 		for ($i = $zero + 1; $i < count($movements); $i++) {
-			$this->origin_type = (string) $movements[$i]->origintype;
-			$newpmp = (float) price2num($this->calculatePMP($qty, $newpmp, (float) $movements[$i]->value, (float) $movements[$i]->price, (int) $movements[$i]->type_mouvement), 'MU');
+			$istransfer = ((float) $movements[$i]->value > 0 && isset($datesofoutputs[(string) $movements[$i]->datem]));
+			if (!$istransfer) {
+				$this->origin_type = (string) $movements[$i]->origintype;
+				$newpmp = (float) price2num($this->calculatePMP($qty, $newpmp, (float) $movements[$i]->value, (float) $movements[$i]->price, (int) $movements[$i]->type_mouvement), 'MU');
+			}
 			$qty += (float) $movements[$i]->value;
 			$nb++;
 		}
