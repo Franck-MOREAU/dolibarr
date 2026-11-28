@@ -1736,7 +1736,7 @@ class MouvementStock extends CommonObject
 	 * The replay starts with a PMP of 0, like a new product, so the result does not depend on the current PMP.
 	 * An entry with an output of the same product at the same date (transfer, inventory), or an entry with no origin
 	 * (inventory, correction), does not change the PMP: its price is only a copy of the PMP of that time.
-	 * While no PMP is known yet in the replay, an entry with no origin is used as the first valuation.
+	 * While no PMP is known yet in the replay, such an entry is used as the first valuation.
 	 * An entry with no origin and an output of another entity at the same date is a transfer between entities: it keeps its price.
 	 *
 	 * @param	array<int,stdClass>	$movements				Movements of the product (value, price, type_mouvement, origintype, datem)
@@ -1769,7 +1769,7 @@ class MouvementStock extends CommonObject
 		$nb = 0;
 		for ($i = $zero + 1; $i < count($movements); $i++) {
 			$isentry = ((float) $movements[$i]->value > 0);
-			$istransfer = ($isentry && isset($datesofoutputs[(string) $movements[$i]->datem]));
+			$istransfer = ($isentry && isset($datesofoutputs[(string) $movements[$i]->datem]) && $newpmp > 0);
 			$isfromotherentity = ($isentry && isset($outputsotherentities[(string) $movements[$i]->datem]));
 			$iswithoutorigin = ($isentry && (string) $movements[$i]->origintype == '' && !$isfromotherentity && $newpmp > 0);
 			if (!$istransfer && !$iswithoutorigin) {
