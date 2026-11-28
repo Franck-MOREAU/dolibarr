@@ -426,8 +426,8 @@ class MouvementStockTest extends CommonClassTest
 		$product2id = $product2->create($user);
 		$this->assertGreaterThan(0, $product2id, 'Failed to create product');
 		$dateinventory = dol_now() + 2;
-		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, -1, 1, 0, 'Inventory output with no PMP known', 'INVPHPUNIT', $dateinventory));
 		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, 11, 0, 2, 'Inventory with no PMP known', 'INVPHPUNIT', $dateinventory));
+		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, -1, 1, 0, 'Inventory output with no PMP known', 'INVPHPUNIT', $dateinventory));
 		$movement->origin_type = 'order_supplier';
 		$movement->origin_id = 1;
 		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, 10, 0, 4, 'Input from supplier'));
