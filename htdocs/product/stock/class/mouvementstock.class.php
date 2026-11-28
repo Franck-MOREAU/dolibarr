@@ -1709,7 +1709,9 @@ class MouvementStock extends CommonObject
 				$datesofoutputs[(string) $movement->datem] = 1;
 			}
 			$qty += (float) $movement->value;
-			if ((float) price2num($qty, 'MS') <= 0) {
+			// The stock is checked after the last movement of a date, so the output of a transfer is not a zero stock
+			$islastofdate = (!isset($movements[$i + 1]) || (string) $movements[$i + 1]->datem != (string) $movement->datem);
+			if ($islastofdate && (float) price2num($qty, 'MS') <= 0) {
 				$zero = $i;
 			}
 		}

@@ -396,5 +396,14 @@ class MouvementStockTest extends CommonClassTest
 		$this->assertIsArray($recalculations);
 		$this->assertCount(1, $recalculations);
 		$this->assertEquals(20, $recalculations[0]['newpmp'], 'A transfer does not change the PMP');
+
+		// The whole stock transferred at once: the output of the transfer is not a zero stock
+		$datetransfer = dol_now() + 1;
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, -6, 1, 999, 'Transfer out of all', 'TRANSFERPHPUNIT2', $datetransfer));
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 6, 0, 999, 'Transfer in of all', 'TRANSFERPHPUNIT2', $datetransfer));
+		$recalculations = $movement->getPMPRecalculations($productid);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(20, $recalculations[0]['newpmp'], 'A transfer of all the stock does not restart the PMP');
 	}
 }
