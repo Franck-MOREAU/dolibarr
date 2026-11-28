@@ -334,4 +334,50 @@ class MouvementStockTest extends CommonClassTest
 
 		$this->assertEquals(0, $movement->regularizeStockDifference($user, $productid, $warehouseid, 'Regularization for unit test', 'REGULPHPUNIT'), 'Nothing to do the second time');
 	}
+	/**
+	 * testPMPRecalculation
+	 *
+	 * The PMP is recalculated from the movements after the last zero stock, then saved.
+	 *
+	 * @return	void
+	 */
+	public function testPMPRecalculation()
+	{
+		global $conf,$user,$langs,$db;
+		$conf = $this->savconf;
+		$user = $this->savuser;
+		$langs = $this->savlangs;
+		$db = $this->savdb;
+
+		$product = new Product($db);
+		$product->initAsSpecimen();
+		$product->ref .= ' phpunit pmp';
+		$product->label .= ' phpunit pmp';
+		$productid = $product->create($user);
+		$this->assertGreaterThan(0, $productid, 'Failed to create product');
+
+		$warehouse = new Entrepot($db);
+		$warehouse->initAsSpecimen();
+		$warehouse->label .= ' phpunit pmp';
+		$warehouseid = $warehouse->create($user);
+		$this->assertGreaterThan(0, $warehouseid, 'Failed to create warehouse');
+
+		$movement = new MouvementStock($db);
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 10, 0, 5, 'Input 1'));
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 10, 0, 15, 'Input 2'));
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, -20, 1, 0, 'Output to zero'));
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 4, 0, 20, 'Input after zero'));
+		$this->assertCount(0, $movement->getPMPRecalculations($productid), 'PMP written by the movements must not be listed');
+
+		// PMP changed without movement
+		$db->query("UPDATE ".$db->prefix()."product SET pmp = 99 WHERE rowid = ".((int) $productid));
+		$recalculations = $movement->getPMPRecalculations($productid);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(20, $recalculations[0]['newpmp'], 'PMP recalculated from the entry after the zero stock');
+		$this->assertEquals(1, $recalculations[0]['nbmovements']);
+
+		$this->assertGreaterThan(0, $movement->savePMP($productid, $recalculations[0]['newpmp']));
+		$this->assertCount(0, $movement->getPMPRecalculations($productid), 'No difference after saving');
+	}
 }

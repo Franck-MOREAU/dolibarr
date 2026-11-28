@@ -92,6 +92,36 @@ if ($action == 'confirm_regularize' && $confirm == 'yes') {
 	exit;
 }
 
+if ($action == 'confirm_recalculatepmp' && $confirm == 'yes') {
+	$recalculations = $movement->getPMPRecalculations($fk_product);
+	if (!is_array($recalculations)) {
+		setEventMessages($movement->error, $movement->errors, 'errors');
+	} else {
+		$nbupdated = 0;
+		$error = 0;
+
+		$db->begin();
+		foreach ($recalculations as $recalculation) {
+			if ($movement->savePMP($recalculation['fk_product'], $recalculation['newpmp']) < 0) {
+				$error++;
+				break;
+			}
+			$nbupdated++;
+		}
+
+		if ($error) {
+			$db->rollback();
+			setEventMessages($movement->error, $movement->errors, 'errors');
+		} else {
+			$db->commit();
+			setEventMessages($langs->trans('PMPRecalculationApplied', $nbupdated), null, 'mesgs');
+		}
+	}
+
+	header("Location: ".$_SERVER["PHP_SELF"]);
+	exit;
+}
+
 
 /*
  * Views
@@ -156,6 +186,65 @@ foreach ($differences as $difference) {
 	print '<td class="right"><strong>'.price2num($difference['difference'], 'MS').'</strong></td>';
 	print '<td class="right">';
 	print '<a class="reposition" href="'.$_SERVER["PHP_SELF"].'?action=regularize&fk_product='.((int) $difference['fk_product']).'&fk_entrepot='.((int) $difference['fk_entrepot']).'&token='.newToken().'">'.$langs->trans('StockMovementsRegularize').'</a>';
+	print '</td>';
+	print '</tr>';
+}
+
+print '</table>';
+print '</div>';
+
+// Recalculation of the PMP from the stock movements
+print '<br>';
+print load_fiche_titre($langs->trans('PMPRecalculation'), '', 'stock');
+print '<span class="opacitymedium">'.$langs->trans('PMPRecalculationDesc').'</span><br><br>';
+if (count($differences) > 0) {
+	print info_admin($langs->trans('PMPRecalculationStockDifferencesFirst'), 0, 0, 'warning');
+}
+
+$recalculations = $movement->getPMPRecalculations();
+if (!is_array($recalculations)) {
+	dol_print_error($db, $movement->error);
+	$recalculations = array();
+}
+
+if ($action == 'recalculatepmp') {
+	$nblines = ($fk_product > 0 ? 1 : count($recalculations));
+	print $form->formconfirm($_SERVER["PHP_SELF"].'?fk_product='.((int) $fk_product), $langs->trans('PMPRecalculationApply'), $langs->trans('ConfirmPMPRecalculationApply', $nblines), 'confirm_recalculatepmp', '', 0, 1);
+}
+
+if (count($recalculations) > 0) {
+	print '<div class="right">';
+	print dolGetButtonAction($langs->trans('PMPRecalculationApplyAll'), '', 'default', $_SERVER["PHP_SELF"].'?action=recalculatepmp&token='.newToken(), '', 1);
+	print '</div>';
+}
+
+print '<div class="div-table-responsive-no-min">';
+print '<table class="noborder centpercent">';
+print '<tr class="liste_titre">';
+print '<th>'.$langs->trans('Product').'</th>';
+print '<th class="right">'.$langs->trans('AverageUnitPricePMPShort').'</th>';
+print '<th class="right">'.$langs->trans('PMPRecalculated').'</th>';
+print '<th class="center">'.$langs->trans('PMPLastZeroStock').'</th>';
+print '<th class="right">'.$langs->trans('PMPMovementsReplayed').'</th>';
+print '<th></th>';
+print '</tr>';
+
+if (count($recalculations) == 0) {
+	print '<tr class="oddeven"><td colspan="6"><span class="opacitymedium">'.$langs->trans('PMPRecalculationNoDifference').'</span></td></tr>';
+}
+foreach ($recalculations as $recalculation) {
+	$productstatic->id = $recalculation['fk_product'];
+	$productstatic->ref = $recalculation['product_ref'];
+	$productstatic->label = $recalculation['product_label'];
+
+	print '<tr class="oddeven">';
+	print '<td class="tdoverflowmax250">'.$productstatic->getNomUrl(1).' - '.dolPrintLabel($recalculation['product_label']).'</td>';
+	print '<td class="right">'.price($recalculation['pmp']).'</td>';
+	print '<td class="right"><strong>'.price($recalculation['newpmp']).'</strong></td>';
+	print '<td class="center">'.($recalculation['datezero'] !== '' ? dol_print_date($recalculation['datezero'], 'dayhour') : '').'</td>';
+	print '<td class="right">'.((int) $recalculation['nbmovements']).'</td>';
+	print '<td class="right">';
+	print '<a class="reposition" href="'.$_SERVER["PHP_SELF"].'?action=recalculatepmp&fk_product='.((int) $recalculation['fk_product']).'&token='.newToken().'">'.$langs->trans('PMPRecalculationApply').'</a>';
 	print '</td>';
 	print '</tr>';
 }

@@ -1617,4 +1617,144 @@ class MouvementStock extends CommonObject
 
 		return (int) $this->db->last_insert_id($this->db->prefix()."stock_mouvement");
 	}
+
+	/**
+	 * Recalculate the PMP of products from their stock movements, from the last time their stock was zero or negative.
+	 * The movements after this point are replayed with calculatePMP(), the rule used when a movement is recorded.
+	 * The stock is the one of the warehouses of the current entity with PMP per entity, of getEntity('stock') otherwise.
+	 *
+	 * @param	int		$fk_product		Only this product (0 = all products with stock movements)
+	 * @return	array<int,array{fk_product:int,product_ref:string,product_label:string,pmp:float,newpmp:float,datezero:int|string,nbmovements:int}>|int	Products whose recalculated PMP differs from the current one, or -1 if error
+	 */
+	public function getPMPRecalculations(int $fk_product = 0)
+	{
+		global $conf;
+
+		require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
+
+		$sql = "SELECT sm.fk_product, sm.value, sm.price, sm.type_mouvement, sm.origintype, sm.datem,";
+		$sql .= " p.ref as product_ref, p.label as product_label, ".Product::getSQLPMP('p', 'ppe')." as pmp";
+		$sql .= " FROM ".$this->db->prefix()."stock_mouvement as sm";
+		$sql .= " INNER JOIN ".$this->db->prefix()."entrepot as e ON e.rowid = sm.fk_entrepot";
+		if (Product::isPMPPerEntity()) {
+			$sql .= " AND e.entity = ".((int) $conf->entity);
+		} else {
+			$sql .= " AND e.entity IN (".getEntity('stock').")";
+		}
+		$sql .= " INNER JOIN ".$this->db->prefix()."product as p ON p.rowid = sm.fk_product";
+		$sql .= Product::getSQLJoinPMP('p', 'ppe', (int) $conf->entity);
+		if ($fk_product > 0) {
+			$sql .= " WHERE sm.fk_product = ".((int) $fk_product);
+		}
+		$sql .= $this->db->order("sm.fk_product,sm.datem,sm.rowid", "ASC,ASC,ASC");
+
+		dol_syslog(get_class($this)."::getPMPRecalculations", LOG_DEBUG);
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$results = array();
+		$movements = array();
+		$current = null;
+		$saveorigintype = $this->origin_type;
+		while (true) {
+			$obj = $this->db->fetch_object($resql);
+			if (!empty($movements) && (!$obj || (int) $obj->fk_product != $current->fk_product)) {
+				$result = $this->recalculatePMPOfMovements($movements, (float) $current->pmp);
+				if (abs($result['newpmp'] - (float) $current->pmp) > 0.00000001) {
+					$results[] = array(
+						'fk_product' => (int) $current->fk_product,
+						'product_ref' => (string) $current->product_ref,
+						'product_label' => (string) $current->product_label,
+						'pmp' => (float) $current->pmp,
+						'newpmp' => $result['newpmp'],
+						'datezero' => $result['datezero'],
+						'nbmovements' => $result['nbmovements'],
+					);
+				}
+				$movements = array();
+			}
+			if (!$obj) {
+				break;
+			}
+			$current = $obj;
+			$movements[] = $obj;
+		}
+		$this->origin_type = $saveorigintype;
+		$this->db->free($resql);
+
+		return $results;
+	}
+
+	/**
+	 * Replay the movements of one product (sorted by date) from the last time the stock was zero or negative.
+	 *
+	 * @param	array<int,stdClass>	$movements	Movements of the product (value, price, type_mouvement, origintype, datem)
+	 * @param	float				$pmp		Current PMP, kept until an entry with a price
+	 * @return	array{newpmp:float,datezero:int|string,nbmovements:int}	Recalculated PMP, date of the last zero stock ('' if never), number of movements replayed
+	 */
+	private function recalculatePMPOfMovements(array $movements, float $pmp): array
+	{
+		$qty = 0;
+		$zero = -1;
+		foreach ($movements as $i => $movement) {
+			$qty += (float) $movement->value;
+			if ((float) price2num($qty, 'MS') <= 0) {
+				$zero = $i;
+			}
+		}
+
+		$qty = 0;
+		for ($i = 0; $i <= $zero; $i++) {
+			$qty += (float) $movements[$i]->value;
+		}
+		$newpmp = $pmp;
+		$nb = 0;
+		for ($i = $zero + 1; $i < count($movements); $i++) {
+			$this->origin_type = (string) $movements[$i]->origintype;
+			$newpmp = (float) price2num($this->calculatePMP($qty, $newpmp, (float) $movements[$i]->value, (float) $movements[$i]->price, (int) $movements[$i]->type_mouvement), 'MU');
+			$qty += (float) $movements[$i]->value;
+			$nb++;
+		}
+
+		return array('newpmp' => $newpmp, 'datezero' => ($zero >= 0 ? $this->db->jdate($movements[$zero]->datem) : ''), 'nbmovements' => $nb);
+	}
+
+	/**
+	 * Save a recalculated PMP: into llx_product_perentity for the current entity with PMP per entity, into llx_product otherwise.
+	 * The PMP is written directly, without trigger.
+	 *
+	 * @param	int		$fk_product		Product
+	 * @param	float	$pmp			PMP to save
+	 * @return	int						Return integer <0 if KO, >0 if OK
+	 */
+	public function savePMP(int $fk_product, float $pmp): int
+	{
+		global $conf;
+
+		require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
+
+		if (Product::isPMPPerEntity()) {
+			$product = new Product($this->db);
+			$product->id = $fk_product;
+			$result = $product->setPMPPerEntity($pmp, (int) $conf->entity);
+			if ($result < 0) {
+				$this->setErrorsFromObject($product);
+			}
+			return $result;
+		}
+
+		$sql = "UPDATE ".$this->db->prefix()."product SET pmp = ".((float) price2num($pmp, 'MU'))." WHERE rowid = ".((int) $fk_product);
+		dol_syslog(get_class($this)."::savePMP", LOG_DEBUG);
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		return 1;
+	}
 }
