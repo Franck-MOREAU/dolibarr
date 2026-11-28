@@ -379,5 +379,13 @@ class MouvementStockTest extends CommonClassTest
 
 		$this->assertGreaterThan(0, $movement->savePMP($productid, $recalculations[0]['newpmp']));
 		$this->assertCount(0, $movement->getPMPRecalculations($productid), 'No difference after saving');
+
+		// An entry with no price after the zero stock does not change the result, which does not depend on the current PMP
+		$this->assertGreaterThan(0, $movement->_create($user, $productid, $warehouseid, 2, 0, 0, 'Input with no price'));
+		$db->query("UPDATE ".$db->prefix()."product SET pmp = 50 WHERE rowid = ".((int) $productid));
+		$recalculations = $movement->getPMPRecalculations($productid);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(20, $recalculations[0]['newpmp'], 'Same result whatever the current PMP');
 	}
 }

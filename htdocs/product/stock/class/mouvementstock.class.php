@@ -1691,9 +1691,10 @@ class MouvementStock extends CommonObject
 
 	/**
 	 * Replay the movements of one product (sorted by date) from the last time the stock was zero or negative.
+	 * The replay starts with a PMP of 0, like a new product, so the result does not depend on the current PMP.
 	 *
 	 * @param	array<int,stdClass>	$movements	Movements of the product (value, price, type_mouvement, origintype, datem)
-	 * @param	float				$pmp		Current PMP, kept until an entry with a price
+	 * @param	float				$pmp		Current PMP, returned when no entry with a price is replayed
 	 * @return	array{newpmp:float,datezero:int|string,nbmovements:int}	Recalculated PMP, date of the last zero stock ('' if never), number of movements replayed
 	 */
 	private function recalculatePMPOfMovements(array $movements, float $pmp): array
@@ -1711,13 +1712,16 @@ class MouvementStock extends CommonObject
 		for ($i = 0; $i <= $zero; $i++) {
 			$qty += (float) $movements[$i]->value;
 		}
-		$newpmp = $pmp;
+		$newpmp = 0;
 		$nb = 0;
 		for ($i = $zero + 1; $i < count($movements); $i++) {
 			$this->origin_type = (string) $movements[$i]->origintype;
 			$newpmp = (float) price2num($this->calculatePMP($qty, $newpmp, (float) $movements[$i]->value, (float) $movements[$i]->price, (int) $movements[$i]->type_mouvement), 'MU');
 			$qty += (float) $movements[$i]->value;
 			$nb++;
+		}
+		if ($newpmp <= 0) {
+			$newpmp = $pmp;	// No entry with a price since the last zero stock: the current PMP is kept
 		}
 
 		return array('newpmp' => $newpmp, 'datezero' => ($zero >= 0 ? $this->db->jdate($movements[$zero]->datem) : ''), 'nbmovements' => $nb);
