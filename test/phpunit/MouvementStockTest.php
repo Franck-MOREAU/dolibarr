@@ -418,6 +418,25 @@ class MouvementStockTest extends CommonClassTest
 		$this->assertCount(1, $recalculations);
 		$this->assertEquals(20, $recalculations[0]['newpmp'], 'An entry with no origin does not change the PMP');
 
+		// While no PMP is known, an entry with no origin gives the first valuation
+		$product2 = new Product($db);
+		$product2->initAsSpecimen();
+		$product2->ref .= ' phpunit pmp 2';
+		$product2->label .= ' phpunit pmp 2';
+		$product2id = $product2->create($user);
+		$this->assertGreaterThan(0, $product2id, 'Failed to create product');
+		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, 10, 0, 2, 'Inventory with no PMP known'));
+		$movement->origin_type = 'order_supplier';
+		$movement->origin_id = 1;
+		$this->assertGreaterThan(0, $movement->_create($user, $product2id, $warehouseid, 10, 0, 4, 'Input from supplier'));
+		$movement->origin_type = '';
+		$movement->origin_id = 0;
+		$db->query("UPDATE ".$db->prefix()."product SET pmp = 99 WHERE rowid = ".((int) $product2id));
+		$recalculations = $movement->getPMPRecalculations($product2id);
+		$this->assertIsArray($recalculations);
+		$this->assertCount(1, $recalculations);
+		$this->assertEquals(3, $recalculations[0]['newpmp'], 'The entry with no origin gives the first valuation');
+
 		// A product whose stock is not equal to its movements is not recalculated
 		$db->query("UPDATE ".$db->prefix()."product_stock SET reel = reel + 1 WHERE fk_product = ".((int) $productid)." AND fk_entrepot = ".((int) $warehouseid));
 		$this->assertCount(0, $movement->getPMPRecalculations($productid));
