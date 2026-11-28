@@ -314,6 +314,8 @@ class MouvementStock extends CommonObject
 		$this->batch = $batch;
 
 		$mvid = 0;
+		$newpmpperentity = null;	// PMP of the entity of the warehouse, when the PMP is managed per entity
+		$entitypmp = 0;
 
 		$product = new Product($this->db);
 
@@ -593,8 +595,6 @@ class MouvementStock extends CommonObject
 
 			// PMP per entity (MultiCompany): the PMP of the entity of the warehouse is calculated with the same rule, on the PMP and
 			// the stock of this entity before the movement. It is saved after the triggers (see below).
-			$newpmpperentity = null;
-			$entitypmp = 0;
 			if (!$error && Product::isPMPPerEntity()) {
 				// Entity of the warehouse (it can differ from the current entity, for example with shared warehouses)
 				$sql = "SELECT entity FROM ".$this->db->prefix()."entrepot WHERE rowid = ".((int) $entrepot_id);
